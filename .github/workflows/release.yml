@@ -1,0 +1,61 @@
+name: Package and release plugin
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - main.js
+      - manifest.json
+      - style.css
+      - scripts/package.ps1
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the triggering commit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = ($env:GITHUB_REPOSITORY -split '/')[1]
+          git clone --no-checkout "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY.git" $name
+          if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
+          git -C $name checkout --detach $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Checkout failed' }
+      - name: Package plugin and publish a versioned release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = ($env:GITHUB_REPOSITORY -split '/')[1]
+          $manifest = Get-Content "$name/manifest.json" -Raw | ConvertFrom-Json
+          & "./$name/scripts/package.ps1"
+          $tag = "v$($manifest.version)"
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect existing releases' }
+          if ($releases | Where-Object tag_name -eq $tag) {
+            Write-Output "Release $tag already exists; preserved without changes."
+            exit 0
+          }
+          $notes = @"
+          AI 辅助开发项目：由作者提出需求，通过 ChatGPT / Codex 辅助编写代码、迭代功能和整理发布文档。
+
+          下载 $name-$tag.zip，解压后得到固定名称的 $name 文件夹。
+          安装包仅包含 main.js、manifest.json 和 style.css。安装与使用说明请见仓库 README。
+          同时提供 SHA-256 校验文件。GitHub 自动生成的 Source code ZIP 是源码快照。
+          "@
+          $notes | Set-Content -LiteralPath release-notes.md -Encoding utf8
+          gh release create $tag "$name/release/$name-$tag.zip" "$name/release/$name-$tag.zip.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "$($manifest.name) $tag" --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed' }
