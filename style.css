@@ -1,0 +1,79 @@
+/*
+ * Reference Manager candidate popup
+ * - all results remain in the DOM
+ * - exactly 3 rows are visible
+ * - the popup container itself is the scroll viewport
+ */
+.auto-suggest-container:has(.reference-manager-suggestion) {
+  max-height: 108px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain;
+}
+
+.auto-suggest-container:has(.reference-manager-suggestion) .typ-suggestion {
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reference-manager-suggestion {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* Common-reference editor */
+.reference-manager-editor-modal {
+  min-width: 520px;
+  max-width: min(680px, calc(100vw - 48px));
+}
+
+.reference-manager-editor-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0;
+}
+
+.reference-manager-editor-field {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.reference-manager-editor-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.reference-manager-editor-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.reference-manager-editor-hint {
+  margin-left: 104px;
+  font-size: 12px;
+  opacity: 0.68;
+  line-height: 1.5;
+}
+
+.reference-manager-editor-modal .typ-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

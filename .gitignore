@@ -1,0 +1,34 @@
+# Generated release packages and build/cache output
+/release/
+/dist/
+/build/
+node_modules/
+.cache/
+coverage/
+*.tsbuildinfo
+*.log
+*.zip
+*.7z
+*.tar.gz
+
+# Credentials and local runtime data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.typora/
+/data.json
+/settings.json
+/config.local.json
+
+# Editor / operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.bak

@@ -1,0 +1,12 @@
+{
+  "id": "local.reference-manager",
+  "name": "Reference Manager",
+  "description": "引用管理器：/ref 插入链接时，Markdown 显示文本自动去掉文件扩展名。",
+  "author": "Local Plugin",
+  "version": "0.1.18",
+  "minAppVersion": "1.14.0",
+  "minCoreVersion": "2.9.14",
+  "platforms": [
+    "win32"
+  ]
+}
