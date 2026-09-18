@@ -56,6 +56,129 @@ const IGNORED_DIRS = new Set([
   '.vscode',
 ])
 
+// Parse one complete inline link, never a substring of a larger selection.
+function parseSelectedMarkdownLink(value) {
+  const text = String(value || '').trim()
+  if (!text.startsWith('[')) return null
+  let i = 1
+  let depth = 1
+  const labelStart = i
+  for (; i < text.length; i++) {
+    if (text[i] === '\\') { i++; continue }
+    if (text[i] === '[') depth++
+    if (text[i] === ']' && --depth === 0) break
+  }
+  if (depth !== 0 || text[i + 1] !== '(') return null
+  const name = unescapeLinkText(text.slice(labelStart, i)).trim()
+  i += 2
+  while (/\s/.test(text[i] || '') && i < text.length) i++
+  let target = ''
+  if (text[i] === '<') {
+    const start = ++i
+    for (; i < text.length && text[i] !== '>'; i++) {
+      if (text[i] === '\\') i++
+      else if (text[i] === '<' || /[\r\n]/.test(text[i])) return null
+    }
+    if (text[i] !== '>') return null
+    target = text.slice(start, i++)
+  } else {
+    const start = i
+    depth = 0
+    for (; i < text.length; i++) {
+      const ch = text[i]
+      if (ch === '\\') { i++; continue }
+      if (ch === '(') depth++
+      else if (ch === ')') {
+        if (depth === 0) break
+        depth--
+      } else if (/\s/.test(ch)) break
+    }
+    if (depth !== 0) return null
+    target = text.slice(start, i)
+  }
+  const separatorStart = i
+  while (i < text.length && /\s/.test(text[i])) i++
+  if (text[i] !== ')') {
+    if (i === separatorStart) return null
+    const close = { '"': '"', "'": "'", '(': ')' }[text[i++]]
+    if (!close) return null
+    for (; i < text.length && text[i] !== close; i++) {
+      if (text[i] === '\\') i++
+    }
+    if (text[i++] !== close) return null
+    while (i < text.length && /\s/.test(text[i])) i++
+  }
+  if (text[i] !== ')' || i !== text.length - 1 || !name || !target) return null
+  return { name, target: unescapeLinkText(target) }
+}
+
+function unescapeLinkText(text) {
+  return text.replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, '$1')
+}
+
+function selectedReferenceTarget(target, activeFile, vaultPath) {
+  // Keep URI destinations intact, but resolve local links against the document.
+  if (path.isAbsolute(target)) return target
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(target) || target.startsWith('//')) return target
+  const base = activeFile ? path.dirname(activeFile) : vaultPath
+  if (!base) return null
+  const suffixAt = target.search(/[?#]/)
+  const localPath = suffixAt < 0 ? target : target.slice(0, suffixAt)
+  const suffix = suffixAt < 0 ? '' : target.slice(suffixAt)
+  if (!localPath) return activeFile ? activeFile + suffix : null
+  let decoded = localPath
+  try { decoded = decodeURIComponent(localPath) } catch (_) { /* Keep literal malformed escapes. */ }
+  return path.resolve(base, decoded) + suffix
+}
+
+function readSelectedReference() {
+  const root = window.editor?.writingArea || document.getElementById('write')
+  const sourceRoot = document.getElementById('typora-source')
+  const active = document.activeElement
+  // CodeMirror selections do not necessarily appear in window.getSelection().
+  if (window.editor?.sourceView?.inSourceMode && sourceRoot) {
+    const cm = window.editor.sourceView.cm || sourceRoot.querySelector('.CodeMirror')?.CodeMirror
+    if (cm && (cm.hasFocus() || sourceRoot.contains(active))) {
+      return { inEditor: true, reference: parseSelectedMarkdownLink(cm.getSelection()) }
+    }
+  }
+  const selection = window.getSelection()
+  const inEditor = !!root && (root.contains(active) || active === root)
+  if (!inEditor && active && active !== document.body && active !== document.documentElement) {
+    return { inEditor: false, reference: null }
+  }
+  if (!selection?.rangeCount || !root) return { inEditor, reference: null }
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+    return { inEditor, reference: null }
+  }
+  if (selection.isCollapsed || selection.rangeCount !== 1) return { inEditor, reference: null }
+  const markdown = parseSelectedMarkdownLink(selection.toString())
+  if (markdown) return { inEditor: true, reference: markdown }
+  // Typora also represents rendered links as spans with md-inline="link".
+  const selector = 'a[href], [md-inline="link"]'
+  const links = Array.from(root.querySelectorAll(selector))
+    .filter(el => range.intersectsNode(el))
+    .filter(el => !el.parentElement?.closest(selector))
+  if (links.length !== 1) return { inEditor: true, reference: null }
+  const link = links[0]
+  const fragment = range.cloneContents()
+  fragment.querySelectorAll(selector).forEach(el => el.remove())
+  // A range wholly inside a link has no link wrapper in its cloned fragment.
+  if (!(link.contains(range.startContainer) && link.contains(range.endContainer))
+      && (fragment.textContent.trim() || fragment.querySelector('img'))) {
+    return { inEditor: true, reference: null }
+  }
+  if (link.closest('[md-inline="reflink"], [md-inline="image"], [md-inline="refimg"]')
+      || link.querySelector('img, [md-inline="image"]')) return { inEditor: true, reference: null }
+  const anchor = link.matches('a[href]') ? link : link.querySelector('a[href]')
+  const target = link.getAttribute('data-href') ?? anchor?.getAttribute('href')
+    ?? link.querySelector('.md-url')?.textContent
+  const name = (anchor?.textContent ?? link.querySelector('.md-link-text')?.textContent
+    ?? link.textContent).trim()
+  return { inEditor: true, reference: name && target ? { name, target } : null }
+}
+
 export default class ReferenceManagerPlugin extends Plugin {
   async onload() {
     this.registerSettings(new PluginSettings(this.app, this.manifest, { version: 1 }))
@@ -69,6 +192,8 @@ export default class ReferenceManagerPlugin extends Plugin {
     this.register(this.app.workspace.activeEditor.suggestion.register(this.fileSuggest))
     this.register(this.app.workspace.activeEditor.suggestion.register(this.favoriteSuggest))
     this.registerSettingTab(this.settingTab)
+
+    this.registerSelectedReferenceCapture()
 
     // Chinese/Japanese/Korean IMEs commit text through composition events.
     // Typora's normal editor edit event may not re-run suggestions at that point,
@@ -206,7 +331,7 @@ export default class ReferenceManagerPlugin extends Plugin {
       title: '引用管理器：新增常用引用',
       scope: 'editor',
       hotkey: 'Alt+Ctrl+R',
-      callback: () => this.openReferenceEditor(),
+      callback: () => this.openSelectedReferenceEditor(),
     })
 
     this.registerCommand({
@@ -259,9 +384,43 @@ export default class ReferenceManagerPlugin extends Plugin {
     }, 1200)
   }
 
-  openReferenceEditor(existingIndex) {
+  registerSelectedReferenceCapture() {
+    this.selectedReference = null
+    const rememberSelection = () => {
+      const selected = readSelectedReference()
+      if (selected.inEditor) {
+        this.selectedReference = {
+          file: this.app.workspace.activeFile,
+          reference: selected.reference,
+        }
+      }
+    }
+    this.registerDomEvent(document, 'selectionchange', rememberSelection)
+    this.registerDomEvent(document, 'keyup', rememberSelection)
+    this.registerDomEvent(document, 'mouseup', rememberSelection)
+    // Capture before a command palette steals editor focus.
+    this.registerDomEvent(document, 'keydown', rememberSelection, { capture: true })
+    this.registerDomEvent(document, 'pointerdown', rememberSelection, { capture: true })
+    this.register(this.app.workspace.on('file:will-open', () => { this.selectedReference = null }))
+    this.register(this.app.workspace.on('file:open', () => { this.selectedReference = null }))
+  }
+
+  openSelectedReferenceEditor() {
+    const selected = readSelectedReference()
+    const saved = this.selectedReference
+    const reference = selected.inEditor ? selected.reference
+      : saved && saved.file === this.app.workspace.activeFile ? saved.reference : null
+    this.selectedReference = null
+    const target = reference && selectedReferenceTarget(
+      reference.target, this.app.workspace.activeFile, this.app.vault.path
+    )
+    this.openReferenceEditor(undefined, target ? { name: reference.name, target } : undefined)
+  }
+
+  openReferenceEditor(existingIndex, initialReference) {
     const refsNow = this.settings.get('references') || []
     const existing = existingIndex == null ? undefined : refsNow[existingIndex]
+    const initial = existing ?? initialReference
 
     const modal = new Modal({ className: 'reference-manager-editor-modal' })
       .setHeader(existing ? '编辑常用引用' : '新增常用引用')
@@ -283,7 +442,7 @@ export default class ReferenceManagerPlugin extends Plugin {
       nameInput.className = 'reference-manager-editor-input'
       nameInput.type = 'text'
       nameInput.placeholder = '例如：B站直播间'
-      nameInput.value = existing?.name ?? ''
+      nameInput.value = initial?.name ?? ''
 
       nameField.append(nameLabel, nameInput)
 
@@ -298,7 +457,7 @@ export default class ReferenceManagerPlugin extends Plugin {
       targetInput.className = 'reference-manager-editor-input'
       targetInput.type = 'text'
       targetInput.placeholder = 'https://... 或 images/example.png'
-      targetInput.value = existing?.target ?? ''
+      targetInput.value = initial?.target ?? ''
 
       targetField.append(targetLabel, targetInput)
 
@@ -357,7 +516,7 @@ export default class ReferenceManagerPlugin extends Plugin {
     })
 
     modal.containerEl.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && !event.shiftKey) {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault()
         modal.footer?.querySelector('.typ-button.primary')?.click()
       }
@@ -645,7 +804,8 @@ class ReferenceIndex {
   }
 
   savedTargetToLink(target) {
-    if (/^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(target) || target.startsWith('mailto:')) {
+    if ((!path.isAbsolute(target) && /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(target))
+        || target.startsWith('//')) {
       return target
     }
 

@@ -1,6 +1,6 @@
 # Typora Reference Manager
 
-基于 Typora Community Plugin 的文件引用与常用链接管理扩展。当前版本：**0.1.18**。
+基于 Typora Community Plugin 的文件引用与常用链接管理扩展。当前版本：**0.1.19**。
 
 > **AI 辅助开发项目**：本扩展由作者提出需求，通过 ChatGPT / Codex 辅助编写代码、迭代功能及整理发布文档。
 
@@ -20,7 +20,7 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 
 ## 安装与升级
 
-1. 从本仓库 Releases 下载 `typora-reference-manager-v0.1.18.zip`。
+1. 从本仓库 Releases 下载 `typora-reference-manager-v0.1.19.zip`。
 2. 关闭 Typora，解压得到 `typora-reference-manager` 文件夹。
 3. 放入 `%USERPROFILE%\.typora\community-plugins\plugins\`。
 4. 确认 `main.js`、`manifest.json` 和 `style.css` 直接位于该文件夹中。
@@ -40,6 +40,12 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 
 常用引用支持网址、绝对文件路径和相对于工作目录的文件路径。图片作为普通链接插入，不嵌入正文。文件扫描跳过 `.git`、`.typora`、`node_modules`、`.idea`、`.vscode`；文件移动后可手动刷新索引。
 
+## 0.1.19 更新
+
+选中完整的 `[名称](地址)` 或正文中已渲染链接的文字后，按 `Alt+Ctrl+R`，或执行“引用管理器：新增常用引用”，即可自动填入名称和地址。确认后保存，立即可通过 `/fav` 搜索；取消不会保存，也不会修改正文。
+
+相对文件地址按当前文档目录转为绝对路径，便于跨文档复用。没有有效链接选区时打开空白弹窗。图片语法和引用式链接不受支持；设置页“新增”仍打开空白弹窗。
+
 ## 0.1.18 更新
 
 `/ref` 生成链接时，显示文本移除最后一个扩展名，实际链接路径不变。`/fav` 继续使用自定义名称。保留此前中文输入法、候选框键盘操作和常用引用弹窗修复。
@@ -47,6 +53,8 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 ## 开发与打包
 
 本仓库从已安装的 0.1.18 版本整理，`main.js` 是直接可编辑的发布入口，未包含历史提交。无需安装 npm 依赖。
+
+运行 `node --test tests/selected-reference.test.cjs` 验证链接解析与收藏逻辑；DOM 测试需要安装 Playwright，否则会跳过。
 
 在仓库根目录运行 PowerShell：
 

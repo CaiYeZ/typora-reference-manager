@@ -1,9 +1,9 @@
 {
   "id": "local.reference-manager",
   "name": "Reference Manager",
-  "description": "引用管理器：/ref 插入链接时，Markdown 显示文本自动去掉文件扩展名。",
+  "description": "引用管理器：/ref 搜索文件，/fav 插入常用引用，选中链接按 Alt+Ctrl+R 即可收藏。",
   "author": "Local Plugin",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "minAppVersion": "1.14.0",
   "minCoreVersion": "2.9.14",
   "platforms": [
