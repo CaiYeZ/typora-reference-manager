@@ -46,6 +46,8 @@ const DEFAULT_SETTINGS = {
   references: [],
   scanFiles: true,
   refreshHotkey: 'Alt+Ctrl+I',
+  addReferenceHotkey: 'Alt+Ctrl+R',
+  prefillSelectedLink: true,
 }
 
 const IGNORED_DIRS = new Set([
@@ -326,13 +328,10 @@ export default class ReferenceManagerPlugin extends Plugin {
     this.register(this.settings.onChange('references', () => this.index.refreshSaved()))
     this.register(this.settings.onChange('scanFiles', () => this.index.refresh()))
 
-    this.registerCommand({
-      id: 'add-reference',
-      title: '引用管理器：新增常用引用',
-      scope: 'editor',
-      hotkey: 'Alt+Ctrl+R',
-      callback: () => this.openSelectedReferenceEditor(),
-    })
+    this.registerAddReferenceCommand()
+    this.register(() => this.addReferenceCommandDispose?.())
+    this.register(this.settings.onChange('addReferenceHotkey', () => this.registerAddReferenceCommand()))
+    this.register(this.settings.onChange('prefillSelectedLink', () => { this.selectedReference = null }))
 
     this.registerCommand({
       id: 'refresh-file-suggestions',
@@ -384,9 +383,25 @@ export default class ReferenceManagerPlugin extends Plugin {
     }, 1200)
   }
 
+  registerAddReferenceCommand() {
+    // Replace the registration so the previous editor shortcut is also removed.
+    this.addReferenceCommandDispose?.()
+    this.addReferenceCommandDispose = this.app.commands.register({
+      id: `${this.manifest.id}:add-reference`,
+      title: `${this.manifest.name}: 引用管理器：新增常用引用`,
+      scope: 'editor',
+      hotkey: this.settings.get('addReferenceHotkey') || DEFAULT_SETTINGS.addReferenceHotkey,
+      callback: () => this.openSelectedReferenceEditor(),
+    })
+  }
+
   registerSelectedReferenceCapture() {
     this.selectedReference = null
     const rememberSelection = () => {
+      if (this.settings.get('prefillSelectedLink') === false) {
+        this.selectedReference = null
+        return
+      }
       const selected = readSelectedReference()
       if (selected.inEditor) {
         this.selectedReference = {
@@ -406,6 +421,11 @@ export default class ReferenceManagerPlugin extends Plugin {
   }
 
   openSelectedReferenceEditor() {
+    if (this.settings.get('prefillSelectedLink') === false) {
+      this.selectedReference = null
+      this.openReferenceEditor()
+      return
+    }
     const selected = readSelectedReference()
     const saved = this.selectedReference
     const reference = selected.inEditor ? selected.reference
@@ -587,6 +607,36 @@ class ReferenceManagerSettingTab extends SettingTab {
     })
 
     this.addSetting(setting => {
+      setting.addName('选中链接自动填充')
+      setting.addDescription('选中 Markdown 链接或正文链接文字后，通过快捷键或新增命令打开弹窗时自动填入名称和地址。关闭后打开空白弹窗；设置页“新增”始终为空白。')
+      setting.addCheckbox(checkbox => {
+        checkbox.checked = plugin.settings.get('prefillSelectedLink') !== false
+        checkbox.onchange = () => plugin.settings.set('prefillSelectedLink', checkbox.checked)
+      })
+    })
+
+    this.addSetting(setting => {
+      setting.addName('新增常用引用快捷键')
+      setting.addDescription('默认 Alt+Ctrl+R。可改为 Ctrl+Shift+R 等组合，修改后立即生效。留空恢复默认；不能与手动刷新快捷键相同。')
+      setting.addInput('text', input => {
+        input.value = plugin.settings.get('addReferenceHotkey') || DEFAULT_SETTINGS.addReferenceHotkey
+        input.placeholder = DEFAULT_SETTINGS.addReferenceHotkey
+        input.onchange = () => {
+          const value = input.value.trim() || DEFAULT_SETTINGS.addReferenceHotkey
+          const normalized = normalizeReferenceHotkey(value)
+          if (!normalized || sameHotkey(normalized, plugin.settings.get('refreshHotkey') || DEFAULT_SETTINGS.refreshHotkey)) {
+            notify(normalized ? '新增快捷键不能与手动刷新快捷键相同' : '请输入有效快捷键，例如 Alt+Ctrl+R 或 Ctrl+Shift+R', 'error')
+            input.value = plugin.settings.get('addReferenceHotkey') || DEFAULT_SETTINGS.addReferenceHotkey
+            return
+          }
+          plugin.settings.set('addReferenceHotkey', normalized)
+          this.render()
+          notify(`新增常用引用快捷键：${normalized}`)
+        }
+      })
+    })
+
+    this.addSetting(setting => {
       setting.addName('自动扫描工作目录文件')
       setting.addDescription('图片、PDF、Markdown、字幕、压缩包等普通文件都会进入 /ref 建议；图片只作为链接，不会嵌入正文。')
       setting.addCheckbox(checkbox => {
@@ -623,6 +673,11 @@ class ReferenceManagerSettingTab extends SettingTab {
 
         input.onchange = () => {
           const normalized = normalizeHotkey(input.value)
+          if (sameHotkey(normalized || DEFAULT_SETTINGS.refreshHotkey, plugin.settings.get('addReferenceHotkey') || DEFAULT_SETTINGS.addReferenceHotkey)) {
+            notify('手动刷新快捷键不能与新增常用引用快捷键相同', 'error')
+            input.value = plugin.settings.get('refreshHotkey') || DEFAULT_SETTINGS.refreshHotkey
+            return
+          }
           plugin.settings.set('refreshHotkey', normalized || 'Alt+Ctrl+I')
           input.value = plugin.settings.get('refreshHotkey')
           notify(`刷新快捷键：${input.value}`)
@@ -650,7 +705,7 @@ class ReferenceManagerSettingTab extends SettingTab {
     if (!refs.length) {
       this.addSetting(setting => {
         setting.addName('暂无常用引用')
-        setting.addDescription('点击上方“新增”，或者在编辑器中按 Alt+Ctrl+R。')
+        setting.addDescription(`点击上方“新增”，或者在编辑器中按 ${plugin.settings.get('addReferenceHotkey') || DEFAULT_SETTINGS.addReferenceHotkey}。`)
       })
       return
     }
@@ -913,6 +968,20 @@ class FavoriteReferenceSuggest extends BaseReferenceSuggest {
     const item = this.index.favoriteByLabel.get(suggest)
     return item ? this.index.favoriteToMarkdown(item) : suggest
   }
+}
+
+function normalizeReferenceHotkey(value) {
+  const parts = String(value).split('+').map(part => part.trim())
+  const modifiers = /^(ctrl|control|alt|option|shift|meta|cmd|command|win|windows)$/i
+  const keys = parts.filter(part => !modifiers.test(part))
+  if (keys.length !== 1 || !/^(?:[a-z0-9]|F(?:[1-9]|1\d|2[0-4]))$/i.test(keys[0])) return null
+  if (parts.length === 1 && !/^F\d+$/i.test(keys[0])) return null
+  return normalizeHotkey(parts.map(part => part === keys[0] ? part.toUpperCase() : part).join('+'))
+}
+
+function sameHotkey(left, right) {
+  const signature = value => normalizeHotkey(value).toLowerCase().split('+').sort().join('+')
+  return signature(left) === signature(right)
 }
 
 function normalizeHotkey(value) {

@@ -9,6 +9,18 @@ const helpers = source.slice(source.indexOf('// Parse one complete'), source.ind
 const context = vm.createContext({ path: path.win32 })
 vm.runInContext(helpers, context)
 const parse = text => JSON.parse(JSON.stringify(context.parseSelectedMarkdownLink(text)))
+vm.runInContext(source.slice(source.indexOf('function normalizeReferenceHotkey'), source.indexOf('function fileIcon')), context)
+
+test('favorite shortcut validation and collision detection', () => {
+  assert.equal(context.normalizeReferenceHotkey('control+shift+r'), 'Ctrl+Shift+R')
+  assert.equal(context.normalizeReferenceHotkey('alt+f5'), 'Alt+F5')
+  assert.equal(context.normalizeReferenceHotkey('F8'), 'F8')
+  for (const value of ['Ctrl', 'Ctrl+', 'Ctrl+K+R', 'R', 'Ctrl+invalid', 'Alt+F25']) {
+    assert.equal(context.normalizeReferenceHotkey(value), null, value)
+  }
+  assert.equal(context.sameHotkey('Ctrl+Alt+I', 'Alt+Control+i'), true)
+  assert.equal(context.sameHotkey('Ctrl+Shift+R', 'Alt+Ctrl+R'), false)
+})
 
 test('complete Markdown links preserve names, escaped punctuation and destinations', () => {
   for (const [input, name, target] of [
@@ -122,13 +134,34 @@ test('real DOM selections and existing modal save/cancel flow', { skip: !chromiu
         open() { document.body.append(this.containerEl) }
         close() { this.containerEl.remove() }
       }
+      class SettingTab {
+        constructor() { this.containerEl = document.createElement('div') }
+        addSettingTitle() {}
+        addSetting(fn) {
+          const row = document.createElement('div')
+          this.containerEl.append(row)
+          const addControl = (tag, type, callback) => {
+            const control = document.createElement(tag)
+            if (type) control.type = type
+            row.append(control)
+            callback(control)
+          }
+          fn({
+            addName: name => { row.dataset.name = name },
+            addDescription: text => { row.dataset.description = text },
+            addCheckbox: callback => addControl('input', 'checkbox', callback),
+            addInput: (type, callback) => addControl('input', type, callback),
+            addButton: callback => addControl('button', null, callback),
+          })
+        }
+      }
       window[Symbol.for('typora-plugin-core@v2')] = {
-        Plugin: class {}, PluginSettings: class {}, SettingTab: class {}, TextSuggest: class {}, Modal,
+        Plugin: class {}, PluginSettings: class {}, SettingTab, TextSuggest: class {}, Modal,
         path: { isAbsolute: () => false },
       }
     })
     // Separate script scope avoids redeclaring the helper functions above.
-    await page.addScriptTag({ content: `{ ${source.replace('export default class', 'class')}; window.TestPlugin = ReferenceManagerPlugin; }` })
+    await page.addScriptTag({ content: `{ ${source.replace('export default class', 'class')}; window.TestPlugin = ReferenceManagerPlugin; window.TestSettingTab = ReferenceManagerSettingTab; }` })
     const modalResult = await page.evaluate(() => {
       const plugin = new window.TestPlugin()
       let refs = []
@@ -161,6 +194,7 @@ test('real DOM selections and existing modal save/cancel flow', { skip: !chromiu
     const captureResult = await page.evaluate(() => {
       const plugin = new window.TestPlugin()
       const root = document.getElementById('write')
+      plugin.settings = { get: () => undefined }
       window.editor.sourceView = { inSourceMode: false }
       const handlers = {}
       const disposers = []
@@ -220,5 +254,58 @@ test('real DOM selections and existing modal save/cancel flow', { skip: !chromiu
       { name: 'Example', target: 'https://example.com' },
       { name: 'Example', target: 'https://example.com' }, null, null, null,
     ])
+    const settingsResult = await page.evaluate(() => {
+      const plugin = new window.TestPlugin()
+      const values = { references: [] }
+      const bindings = new Map()
+      plugin.manifest = { id: 'local.reference-manager', name: 'Reference Manager' }
+      plugin.app = { commands: { register: command => {
+        bindings.set(command.hotkey, command)
+        return () => bindings.delete(command.hotkey)
+      } } }
+      plugin.settings = {
+        get: key => values[key],
+        set: (key, value) => {
+          values[key] = value
+          if (key === 'addReferenceHotkey') plugin.registerAddReferenceCommand()
+        },
+      }
+      plugin.registerAddReferenceCommand()
+      const tab = new window.TestSettingTab(plugin)
+      const findInput = name => tab.containerEl.querySelector(`[data-name="${name}"] input`)
+      const change = (name, value) => {
+        const input = findInput(name)
+        input.value = value
+        input.onchange()
+      }
+      const defaults = [findInput('选中链接自动填充').checked, findInput('新增常用引用快捷键').value]
+      change('新增常用引用快捷键', 'Ctrl+Shift+R')
+      const changed = [...bindings.keys()]
+      const hint = tab.containerEl.querySelector('[data-name="暂无常用引用"]').dataset.description
+      change('新增常用引用快捷键', 'Ctrl+Alt+I')
+      const collision = findInput('新增常用引用快捷键').value
+      change('手动刷新快捷键', 'Shift+Ctrl+R')
+      const reverseCollision = findInput('手动刷新快捷键').value
+      change('新增常用引用快捷键', 'Ctrl+')
+      const invalid = findInput('新增常用引用快捷键').value
+      change('新增常用引用快捷键', '')
+      const reset = [...bindings.keys()]
+      const toggle = findInput('选中链接自动填充')
+      toggle.checked = false
+      toggle.onchange()
+      plugin.selectedReference = { file: 'old', reference: { name: 'Old', target: 'x' } }
+      let blank = false
+      plugin.openReferenceEditor = (...args) => { blank = args.length === 0 }
+      plugin.openSelectedReferenceEditor()
+      plugin.addReferenceCommandDispose()
+      return { defaults, changed, hintUpdated: hint.includes('Ctrl+Shift+R'), collision,
+        reverseCollision, invalid, reset, disabled: values.prefillSelectedLink === false,
+        blank, cleared: plugin.selectedReference === null, unloaded: bindings.size === 0 }
+    })
+    assert.deepEqual(settingsResult, {
+      defaults: [true, 'Alt+Ctrl+R'], changed: ['Ctrl+Shift+R'], hintUpdated: true,
+      collision: 'Ctrl+Shift+R', reverseCollision: 'Alt+Ctrl+I', invalid: 'Ctrl+Shift+R',
+      reset: ['Alt+Ctrl+R'], disabled: true, blank: true, cleared: true, unloaded: true,
+    })
   } finally { await browser.close() }
 })
