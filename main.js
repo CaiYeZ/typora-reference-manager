@@ -562,6 +562,23 @@ export default class ReferenceManagerPlugin extends Plugin {
     modal.open()
   }
 
+  moveReference(index, direction) {
+    const refs = [...(this.settings.get('references') || [])]
+    const destination = index + direction
+    if (!Number.isInteger(index) || (direction !== -1 && direction !== 1)
+      || index < 0 || index >= refs.length || destination < 0 || destination >= refs.length) return
+
+    const scrollPositions = []
+    for (let el = this.settingTab.containerEl; el; el = el.parentElement) {
+      scrollPositions.push([el, el.scrollTop])
+    }
+
+    ;[refs[index], refs[destination]] = [refs[destination], refs[index]]
+    this.settings.set('references', refs)
+    this.settingTab.render()
+    for (const [el, scrollTop] of scrollPositions) el.scrollTop = scrollTop
+  }
+
   deleteReference(index) {
     const refs = [...(this.settings.get('references') || [])]
     const removed = refs[index]
@@ -687,7 +704,7 @@ class ReferenceManagerSettingTab extends SettingTab {
 
     this.addSetting(setting => {
       setting.addName('管理常用引用')
-      setting.addDescription('保存经常使用的网址或文件，并保留自定义名称。')
+      setting.addDescription('保存经常使用的网址或文件，并保留自定义名称。使用上移／下移调整顺序后自动保存，并用于 /fav 候选列表。')
       setting.addButton(button => {
         button.textContent = '＋ 新增'
         button.onclick = () => plugin.openReferenceEditor()
@@ -714,6 +731,16 @@ class ReferenceManagerSettingTab extends SettingTab {
       this.addSetting(setting => {
         setting.addName(ref.name)
         setting.addDescription(ref.target)
+        setting.addButton(button => {
+          button.textContent = '上移'
+          button.disabled = index === 0
+          button.onclick = () => plugin.moveReference(index, -1)
+        })
+        setting.addButton(button => {
+          button.textContent = '下移'
+          button.disabled = index === refs.length - 1
+          button.onclick = () => plugin.moveReference(index, 1)
+        })
         setting.addButton(button => {
           button.textContent = '编辑'
           button.onclick = () => plugin.openReferenceEditor(index)
