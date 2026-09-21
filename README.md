@@ -1,6 +1,6 @@
 # Typora Reference Manager
 
-基于 Typora Community Plugin 的文件引用与常用链接管理扩展。当前版本：**0.1.19**。
+基于 Typora Community Plugin 的文件引用与常用链接管理扩展。当前版本：**0.1.20**。
 
 > **AI 辅助开发项目**：本扩展由作者提出需求，通过 ChatGPT / Codex 辅助编写代码、迭代功能及整理发布文档。
 
@@ -20,7 +20,7 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 
 ## 安装与升级
 
-1. 从本仓库 Releases 下载 `typora-reference-manager-v0.1.19.zip`。
+1. 从本仓库 Releases 下载 `typora-reference-manager-v0.1.20.zip`。
 2. 关闭 Typora，解压得到 `typora-reference-manager` 文件夹。
 3. 放入 `%USERPROFILE%\.typora\community-plugins\plugins\`。
 4. 确认 `main.js`、`manifest.json` 和 `style.css` 直接位于该文件夹中。
@@ -40,13 +40,13 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 
 常用引用支持网址、绝对文件路径和相对于工作目录的文件路径。图片作为普通链接插入，不嵌入正文。文件扫描跳过 `.git`、`.typora`、`node_modules`、`.idea`、`.vscode`；文件移动后可手动刷新索引。
 
-## 0.1.19 更新
-
-### 2026-09-21 更新：常用引用排序
+## 0.1.20 更新：常用引用排序
 
 - 设置页“管理常用引用”新增“上移／下移”按钮，调整后自动保存，并用于 `/fav` 候选列表。
 - 第一条不能上移，最后一条不能下移；调整顺序时保持设置页滚动位置。
 - 新增引用追加到末尾，编辑保持原位置，删除保持其他引用的相对顺序。
+
+## 0.1.19 更新
 
 选中完整的 `[名称](地址)` 或正文中已渲染链接的文字后，按 `Alt+Ctrl+R`，或执行“引用管理器：新增常用引用”，即可自动填入名称和地址。确认后保存，立即可通过 `/fav` 搜索；取消不会保存，也不会修改正文。
 
