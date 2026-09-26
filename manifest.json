@@ -3,7 +3,7 @@
   "name": "Reference Manager",
   "description": "引用管理器：/ref 搜索文件，/fav 插入常用引用，选中链接按 Alt+Ctrl+R 即可收藏。",
   "author": "Local Plugin",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "minAppVersion": "1.14.0",
   "minCoreVersion": "2.9.14",
   "platforms": [

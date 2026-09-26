@@ -48,6 +48,9 @@ const DEFAULT_SETTINGS = {
   refreshHotkey: 'Alt+Ctrl+I',
   addReferenceHotkey: 'Alt+Ctrl+R',
   prefillSelectedLink: true,
+  linkNameRulesEnabled: true,
+  linkNameRules: [{ name: 'B站视频 BV 号', enabled: true,
+    pattern: '^https?://(?:www\\.)?bilibili\\.com/video/(BV[A-Za-z0-9]+)(?:/)?(?:[?#][^\\s]*)?$', template: '$1' }],
 }
 
 const IGNORED_DIRS = new Set([
@@ -181,6 +184,73 @@ function readSelectedReference() {
   return { inEditor: true, reference: name && target ? { name, target } : null }
 }
 
+// Rule matching never changes the destination or evaluates user code.
+function ruleLinkMarkdown(text, rules) {
+  if (typeof text !== 'string' || !/^https?:\/\/[^\s<>]+$/i.test(text)) return null
+  try { if (!new URL(text).hostname) return null } catch (_) { return null }
+  for (const rule of Array.isArray(rules) ? rules : []) {
+    if (!rule || rule.enabled !== true || typeof rule.pattern !== 'string'
+        || !rule.pattern || typeof rule.template !== 'string' || !rule.template.trim()) continue
+    try {
+      const match = new RegExp(rule.pattern).exec(text)
+      if (!match || match.index !== 0 || match[0].length !== text.length) continue
+      const name = rule.template.replace(/\$([1-9]\d?)/g, (_, n) => match[Number(n)] ?? '').trim()
+      if (!name || /[\r\n]/.test(name)) continue
+      const label = name.replace(/[\\`*_{}\[\]()<>!&#~]/g, '\\$&')
+      return `[${label}](${wrapMarkdownTarget(text)})`
+    } catch (_) { /* Ignore damaged persisted rules. */ }
+  }
+  return null
+}
+
+function selectedUrlReplacement() {
+  const editor = window.editor
+  const active = document.activeElement
+  if (editor?.sourceView?.inSourceMode) {
+    const cm = editor.sourceView.cm
+      || document.getElementById('typora-source')?.querySelector('.CodeMirror')?.CodeMirror
+    if (!cm?.hasFocus() || typeof cm.replaceSelection !== 'function'
+        || typeof cm.getTokenAt !== 'function' || cm.listSelections().length !== 1) return null
+    const from = cm.getCursor('from'), to = cm.getCursor('to')
+    if (from.line !== to.line || from.ch === to.ch) return null
+    const line = cm.getLine(from.line)
+    // Conservative around Markdown syntax: never rewrite a link destination or code.
+    if (/[`\[\]<>]/.test(line.slice(0, from.ch) + line.slice(to.ch))) return null
+    if ((from.ch && !/\s/.test(line[from.ch - 1])) || (to.ch < line.length && !/\s/.test(line[to.ch]))) return null
+    for (let ch = from.ch + 1; ch <= to.ch; ch++) {
+      const token = cm.getTokenAt({ line: from.line, ch })
+      if (/comment|code|image|string|formatting/.test(token?.type || '')) return null
+    }
+    return { text: cm.getSelection(), replace: value => cm.replaceSelection(value, 'end', 'reference-rule') }
+  }
+  const root = editor?.writingArea || document.getElementById('write')
+  const selection = window.getSelection()
+  if (!root || !selection || selection.rangeCount !== 1 || selection.isCollapsed
+      || (active && active !== document.body && active !== document.documentElement && !root.contains(active))
+      || typeof editor?.UserOp?.pasteHandler !== 'function') return null
+  const range = selection.getRangeAt(0)
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null
+  const excluded = 'a, code, pre, img, input, textarea, [contenteditable="false"], [md-inline], .md-fences, .CodeMirror'
+  const parent = node => node.nodeType === 1 ? node : node.parentElement
+  // Typora renders bare auto-detected URLs with md-inline="url".
+  const autoUrl = parent(range.startContainer)?.closest('[md-inline="url"]')
+  const wholeAutoUrl = autoUrl && autoUrl.contains(range.endContainer)
+    && autoUrl.textContent === selection.toString()
+    && !autoUrl.parentElement.closest(excluded)
+    && !autoUrl.querySelector('code, pre, img, input, textarea, [contenteditable="false"]')
+  if (!wholeAutoUrl && (parent(range.startContainer)?.closest(excluded) || parent(range.endContainer)?.closest(excluded)
+      || range.cloneContents().querySelector(excluded))) return null
+  // Require a whole whitespace-delimited URL, rather than a substring of another URL.
+  const before = range.cloneRange(), after = range.cloneRange()
+  const block = parent(range.startContainer)?.closest('p, li, h1, h2, h3, h4, h5, h6, td, th') || root
+  if (!block.contains(range.endContainer)) return null
+  before.selectNodeContents(block); before.setEnd(range.startContainer, range.startOffset)
+  after.selectNodeContents(block); after.setStart(range.endContainer, range.endOffset)
+  if (/\S$/.test(before.toString()) || /^\S/.test(after.toString())) return null
+  if (/[`\[\]<>]/.test(before.toString() + after.toString())) return null
+  return { text: selection.toString(), replace: value => editor.UserOp.pasteHandler(editor, value, true) }
+}
+
 export default class ReferenceManagerPlugin extends Plugin {
   async onload() {
     this.registerSettings(new PluginSettings(this.app, this.manifest, { version: 1 }))
@@ -196,6 +266,7 @@ export default class ReferenceManagerPlugin extends Plugin {
     this.registerSettingTab(this.settingTab)
 
     this.registerSelectedReferenceCapture()
+    this.registerLinkNameRules()
 
     // Chinese/Japanese/Korean IMEs commit text through composition events.
     // Typora's normal editor edit event may not re-run suggestions at that point,
@@ -383,6 +454,19 @@ export default class ReferenceManagerPlugin extends Plugin {
     }, 1200)
   }
 
+  registerLinkNameRules() {
+    this.registerDomEvent(window, 'keydown', event => {
+      if (this.settings.get('linkNameRulesEnabled') === false || event.defaultPrevented
+          || event.isComposing || event.keyCode === 229 || event.repeat || !hotkeyMatches(event, 'Ctrl+K')) return
+      const selected = selectedUrlReplacement()
+      const markdown = selected && ruleLinkMarkdown(selected.text, this.settings.get('linkNameRules'))
+      if (!markdown) return
+      selected.replace(markdown)
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }, { capture: true })
+  }
+
   registerAddReferenceCommand() {
     // Replace the registration so the previous editor shortcut is also removed.
     this.addReferenceCommandDispose?.()
@@ -562,6 +646,69 @@ export default class ReferenceManagerPlugin extends Plugin {
     modal.open()
   }
 
+  openLinkRuleEditor(index) {
+    const rules = this.settings.get('linkNameRules') || []
+    const existing = index == null ? null : rules[index]
+    const modal = new Modal({ className: 'reference-manager-rule-modal' })
+      .setHeader(existing ? '编辑显示名规则' : '新增显示名规则')
+    const inputs = {}
+    modal.setBody(body => {
+      const form = document.createElement('div')
+      form.className = 'reference-manager-editor-form'
+      for (const [key, title, placeholder] of [
+        ['name', '规则名称', '例如：B站视频 BV 号'],
+        ['pattern', '正则表达式（不加 / 分隔符）', '^https?://example\\.com/(.+)$'],
+        ['template', '显示名模板', '$1'],
+      ]) {
+        const label = document.createElement('label')
+        label.className = 'reference-manager-editor-field'
+        const caption = document.createElement('span')
+        caption.textContent = title
+        const input = document.createElement('input')
+        input.className = 'reference-manager-editor-input'
+        input.type = 'text'
+        input.placeholder = placeholder
+        input.value = existing?.[key] ?? ''
+        inputs[key] = input
+        label.append(caption, input)
+        form.append(label)
+      }
+      const hint = document.createElement('div')
+      hint.textContent = '表达式须匹配整个网址；模板支持 $1～$99 捕获组。按列表顺序使用首条有效匹配。'
+      form.append(hint)
+      body.append(form)
+    })
+    const save = () => {
+      const name = inputs.name.value.trim(), pattern = inputs.pattern.value.trim()
+      const template = inputs.template.value.trim()
+      if (!name || !pattern || !template) { notify('请填写规则名称、正则表达式和模板', 'error'); return }
+      try { new RegExp(pattern) } catch (_) { notify('正则表达式无效，请检查后保存', 'error'); return }
+      const next = [...(this.settings.get('linkNameRules') || [])]
+      const rule = { name, pattern, template, enabled: existing?.enabled !== false }
+      if (index == null) next.push(rule)
+      else next[index] = rule
+      this.settings.set('linkNameRules', next)
+      this.settingTab.render()
+      modal.close()
+    }
+    modal.setFooter(footer => {
+      for (const [title, action] of [['取消', () => modal.close()], ['保存', save]]) {
+        const button = document.createElement('button')
+        button.className = 'typ-button'
+        button.textContent = title
+        button.onclick = action
+        footer.append(button)
+      }
+    })
+    modal.containerEl.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
+        event.preventDefault(); save()
+      }
+    })
+    modal.open()
+    inputs.name.focus()
+  }
+
   moveReference(index, direction) {
     const refs = [...(this.settings.get('references') || [])]
     const destination = index + direction
@@ -612,6 +759,54 @@ class ReferenceManagerSettingTab extends SettingTab {
     this.containerEl.replaceChildren()
 
     this.addSettingTitle('引用管理器')
+
+    this.addSetting(setting => {
+      setting.addName('Ctrl+K 链接显示名规则')
+      setting.addDescription('选中完整裸网址后按 Ctrl+K，按顺序使用首条命中规则生成链接。未命中时保留原生行为。')
+      setting.addCheckbox(checkbox => {
+        checkbox.checked = plugin.settings.get('linkNameRulesEnabled') !== false
+        checkbox.onchange = () => plugin.settings.set('linkNameRulesEnabled', checkbox.checked)
+      })
+      setting.addButton(button => {
+        button.textContent = '＋ 新增规则'
+        button.onclick = () => plugin.openLinkRuleEditor()
+      })
+    })
+    const rules = plugin.settings.get('linkNameRules')
+    ;(Array.isArray(rules) ? rules : []).forEach((rule, index) => {
+      const update = mutate => {
+        const next = [...plugin.settings.get('linkNameRules')]
+        mutate(next)
+        plugin.settings.set('linkNameRules', next)
+        this.render()
+      }
+      this.addSetting(setting => {
+        setting.addName(rule?.name || '无效规则')
+        setting.addDescription(`${rule?.pattern || ''} → ${rule?.template || ''}`)
+        setting.addCheckbox(checkbox => {
+          checkbox.checked = rule?.enabled === true
+          checkbox.onchange = () => update(next => { next[index] = { ...rule, enabled: checkbox.checked } })
+        })
+        for (const [label, delta] of [['上移', -1], ['下移', 1]]) {
+          setting.addButton(button => {
+            button.textContent = label
+            button.disabled = index + delta < 0 || index + delta >= rules.length
+            button.onclick = () => update(next => {
+              const target = index + delta
+              if (target >= 0 && target < next.length) [next[index], next[target]] = [next[target], next[index]]
+            })
+          })
+        }
+        setting.addButton(button => {
+          button.textContent = '编辑'
+          button.onclick = () => plugin.openLinkRuleEditor(index)
+        })
+        setting.addButton(button => {
+          button.textContent = '删除'
+          button.onclick = () => update(next => next.splice(index, 1))
+        })
+      })
+    })
 
     this.addSetting(setting => {
       setting.addName('文件引用')

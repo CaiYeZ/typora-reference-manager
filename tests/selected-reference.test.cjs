@@ -307,5 +307,89 @@ test('real DOM selections and existing modal save/cancel flow', { skip: !chromiu
       collision: 'Ctrl+Shift+R', reverseCollision: 'Alt+Ctrl+I', invalid: 'Ctrl+Shift+R',
       reset: ['Alt+Ctrl+R'], disabled: true, blank: true, cleared: true, unloaded: true,
     })
+    const ruleResult = await page.evaluate(() => {
+      const plugin = new window.TestPlugin()
+      const url = 'https://www.bilibili.com/video/BV1g6hR6pEmv/'
+      const values = { references: [], linkNameRulesEnabled: true, linkNameRules: [
+        { name: 'BV', enabled: true, pattern: '^https://www\\.bilibili\\.com/video/(BV\\w+)/$', template: '$1' },
+      ] }
+      plugin.settings = { get: key => values[key], set: (key, value) => { values[key] = value } }
+      plugin.settingTab = new window.TestSettingTab(plugin)
+      const root = document.getElementById('write')
+      let pasted = null
+      window.editor = { writingArea: root, UserOp: { pasteHandler: (editor, text, markdown) => {
+        pasted = [text, markdown]
+      } } }
+      const disposers = []
+      plugin.registerDomEvent = (el, name, fn, options) => {
+        el.addEventListener(name, fn, options)
+        disposers.push(() => el.removeEventListener(name, fn, options))
+      }
+      plugin.registerLinkNameRules()
+      const press = (html, selector, overrides = {}) => {
+        pasted = null
+        root.innerHTML = html
+        root.focus()
+        const range = document.createRange()
+        range.selectNodeContents(root.querySelector(selector) || root)
+        window.getSelection().removeAllRanges()
+        window.getSelection().addRange(range)
+        const event = new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true, ...overrides })
+        root.dispatchEvent(event)
+        return [event.defaultPrevented, pasted]
+      }
+      const converted = press(`<p>previous paragraph</p><p class="url">${url}</p>`, '.url')
+      const autoConverted = press(`<p><span md-inline="url"><a href="${url}">${url}</a></span></p>`, 'a')
+      const untouched = [
+        press('<p>https://example.com</p>', 'p'),
+        press(`<p><a href="${url}">${url}</a></p>`, 'a'),
+        press(`<pre><code>${url}</code></pre>`, 'code'),
+        press(`<p><span md-inline="link">${url}</span></p>`, 'span'),
+        press(`<p>${url}</p>`, 'p', { isComposing: true }),
+        press(`<p>${url}</p>`, 'p', { shiftKey: true }),
+        press(`<p>${url}</p>`, 'p', { repeat: true }),
+      ]
+      values.linkNameRulesEnabled = false
+      untouched.push(press(`<p>${url}</p>`, 'p'))
+      values.linkNameRulesEnabled = true
+      // Settings modal validates expressions and supports all list operations.
+      plugin.openLinkRuleEditor()
+      const fields = lastModal.body.querySelectorAll('input')
+      fields[0].value = 'Custom'; fields[1].value = '('; fields[2].value = '$1'
+      lastModal.footer.lastChild.click()
+      const invalidStayedOpen = lastModal.containerEl.isConnected && values.linkNameRules.length === 1
+      fields[1].value = '^https://(.+)$'; fields[2].value = ''
+      lastModal.footer.lastChild.click()
+      const emptyStayedOpen = lastModal.containerEl.isConnected && values.linkNameRules.length === 1
+      fields[2].value = '$1'
+      lastModal.footer.lastChild.click()
+      const added = values.linkNameRules.length === 2 && !lastModal.containerEl.isConnected
+      const row = name => plugin.settingTab.containerEl.querySelector(`[data-name="${name}"]`)
+      const click = (name, label) => Array.from(row(name).querySelectorAll('button')).find(b => b.textContent === label).click()
+      click('Custom', '上移')
+      const reordered = values.linkNameRules[0].name === 'Custom'
+      const toggle = row('Custom').querySelector('input')
+      toggle.checked = false; toggle.onchange()
+      click('Custom', '编辑')
+      lastModal.body.querySelectorAll('input')[2].value = 'Changed'
+      lastModal.footer.lastChild.click()
+      const edited = !values.linkNameRules[0].enabled && values.linkNameRules[0].template === 'Changed'
+      const persisted = JSON.parse(JSON.stringify(values))
+      plugin.settings.get = key => persisted[key]
+      plugin.settingTab.render()
+      const restored = row('Custom').dataset.description.endsWith('Changed') && !row('Custom').querySelector('input').checked
+      plugin.settings.get = key => values[key]
+      click('Custom', '删除'); click('BV', '删除')
+      plugin.settingTab.render()
+      const emptyPreserved = values.linkNameRules.length === 0 && !row('BV')
+      disposers.forEach(dispose => dispose())
+      return { converted, autoConverted, untouched, invalidStayedOpen, emptyStayedOpen, added, reordered, edited, restored, emptyPreserved }
+    })
+    assert.deepEqual(ruleResult.converted, [true, ['[BV1g6hR6pEmv](https://www.bilibili.com/video/BV1g6hR6pEmv/)', true]])
+    assert.deepEqual(ruleResult.autoConverted, ruleResult.converted)
+    ruleResult.untouched.forEach(result => assert.deepEqual(result, [false, null]))
+    for (const key of ['invalidStayedOpen', 'emptyStayedOpen', 'added', 'reordered', 'edited', 'restored', 'emptyPreserved']) {
+      assert.equal(ruleResult[key], true, key)
+    }
   } finally { await browser.close() }
 })

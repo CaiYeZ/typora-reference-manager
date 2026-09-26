@@ -1,6 +1,6 @@
 # Typora Reference Manager
 
-基于 Typora Community Plugin 的文件引用与常用链接管理扩展。当前版本：**0.1.20**。
+基于 Typora Community Plugin 的文件引用与常用链接管理扩展。当前版本：**0.1.21**。
 
 > **AI 辅助开发项目**：本扩展由作者提出需求，通过 ChatGPT / Codex 辅助编写代码、迭代功能及整理发布文档。
 
@@ -20,7 +20,7 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 
 ## 安装与升级
 
-1. 从本仓库 Releases 下载 `typora-reference-manager-v0.1.20.zip`。
+1. 从本仓库 Releases 下载 `typora-reference-manager-v0.1.21.zip`。
 2. 关闭 Typora，解压得到 `typora-reference-manager` 文件夹。
 3. 放入 `%USERPROFILE%\.typora\community-plugins\plugins\`。
 4. 确认 `main.js`、`manifest.json` 和 `style.css` 直接位于该文件夹中。
@@ -39,6 +39,15 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 | 修改刷新快捷键 | 设置 → Reference Manager → 手动刷新快捷键，修改后立即生效 |
 
 常用引用支持网址、绝对文件路径和相对于工作目录的文件路径。图片作为普通链接插入，不嵌入正文。文件扫描跳过 `.git`、`.typora`、`node_modules`、`.idea`、`.vscode`；文件移动后可手动刷新索引。
+
+## 0.1.21 更新：Ctrl+K 链接显示名规则
+
+- 在正文或源码模式选中完整 HTTP(S) 裸网址后，按 Ctrl+K，按顺序使用首条有效匹配生成链接。
+- 默认内置 B 站 BV 号规则，例如将网址显示为 BV1g6hR6pEmv，目标网址保持原样。
+- 设置页支持规则新增、编辑、删除、启停和排序；保存后立即生效，重启后保留。
+- 正则使用 JavaScript 语法，不加 / 分隔符，须匹配整个网址；模板支持 $1～$99 捕获组，结果按普通文字转义。
+- 未命中、功能关闭或选区不完整时保留 Typora 原生 Ctrl+K；已有链接、代码、图片及设置输入框不处理。同段或源码同一行含反引号、方括号或尖括号时保留原生行为。
+- 支持撤销，不联网获取标题，不解析短链接，不影响 /ref、/fav 或收藏名称。
 
 ## 0.1.20 更新：常用引用排序
 
@@ -62,7 +71,7 @@ manifest 声明：Windows、Typora ≥ 1.14.0、Typora Community Plugin ≥ 2.9.
 
 本仓库从已安装的 0.1.18 版本整理，`main.js` 是直接可编辑的发布入口，未包含历史提交。无需安装 npm 依赖。
 
-运行 `node --test tests/selected-reference.test.cjs` 验证链接解析与收藏逻辑；DOM 测试需要安装 Playwright，否则会跳过。
+运行 `node --test tests/*.test.cjs` 验证链接解析与收藏逻辑；DOM 测试需要安装 Playwright，否则会跳过。
 
 在仓库根目录运行 PowerShell：
 
